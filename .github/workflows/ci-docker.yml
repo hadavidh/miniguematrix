@@ -84,64 +84,60 @@ jobs:
         working-directory: frontend
 
   docker:
-    runs-on: ubuntu-latest
-    needs: [backend, frontend]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+   runs-on: ubuntu-latest
+   needs: [backend, frontend]
+   steps:
+    - uses: actions/checkout@v4
 
-      # Récupère le jar construit dans le job backend (si tu utilises upload-artifact)
-      - name: Download jar artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: backend-jar
-          path: demo/target
+    - name: Download jar artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: backend-jar
+        path: demo/target
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata (tags/labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha
-            type=raw,value=latest
+    - name: Extract Docker metadata (tags/labels)
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=sha,format=long
+          type=raw,value=latest
 
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: demo
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+    - name: Build and push image
+      uses: docker/build-push-action@v6
+      with:
+        context: demo
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
 
-      # Smoke test : le conteneur ne reste PAS après le job (runner jetable)
-      - name: Run container (smoke test)
-        run: |
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
-          docker run -d --name gematria -p 8080:8080 "$IMAGE"
+    - name: Run container (smoke test)
+      run: |
+        IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+        docker pull "$IMAGE"
+        docker run -d --name gematria -p 8080:8080 "$IMAGE"
 
-          # attend le démarrage (30 essais x 2s = ~60s)
-          for i in {1..30}; do
-            # Si tu n'as pas actuator, remplace par un endpoint existant de ton API.
-            if curl -fsS http://localhost:8080/actuator/health >/dev/null 2>&1; then
-              echo "App is healthy"
-              exit 0
-            fi
-            sleep 2
-          done
+        for i in {1..30}; do
+          if curl -fsS http://localhost:8080/actuator/health >/dev/null 2>&1; then
+            echo "App is healthy"
+            exit 0
+          fi
+          sleep 2
+        done
 
-          echo "Healthcheck failed"
-          docker logs gematria
-          exit 1
+        echo "Healthcheck failed"
+        docker logs gematria
+        exit 1
 
-      - name: Cleanup
-        if: always()
-        run: |
-          docker rm -f gematria || true
+    - name: Cleanup
+      if: always()
+      run: |
+        docker rm -f gematria || true
