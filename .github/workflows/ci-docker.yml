@@ -24,7 +24,6 @@ jobs:
           java-version: "21"
           cache: maven
 
-      # Contournement possible du 403 Maven Central (repo.maven.apache.org)
       - name: Configure Maven mirror (repo1.maven.org)
         run: |
           mkdir -p ~/.m2
@@ -46,16 +45,32 @@ jobs:
         run: mvn -s ~/.m2/settings.xml -B clean test
         working-directory: demo
 
-      - name: Package backend jar (skip tests)
-        run: mvn -s ~/.m2/settings.xml -B -DskipTests package
+      - name: Package backend jar (skip tests + repackage)
+        run: mvn -s ~/.m2/settings.xml -B -DskipTests package spring-boot:repackage
         working-directory: demo
 
-      # IMPORTANT: éviter de prendre *.jar.original (non exécutable)
-      - name: Create demo/target/app.jar (exclude .original)
+      - name: Create demo/target/app.jar (pick Spring Boot fat jar)
         run: |
-          JAR=$(ls -1 demo/target/*.jar | grep -v '\.original$' | head -n 1)
-          echo "Using jar: $JAR"
-          cp "$JAR" demo/target/app.jar
+          set -e
+          BOOTJAR=""
+          for f in demo/target/*.jar; do
+            case "$f" in
+              *.original) continue ;;
+            esac
+            if jar tf "$f" | grep -q "^BOOT-INF/"; then
+              BOOTJAR="$f"
+              break
+            fi
+          done
+
+          if [ -z "$BOOTJAR" ]; then
+            echo "No Spring Boot fat jar found in demo/target"
+            ls -lah demo/target
+            exit 1
+          fi
+
+          echo "Using boot jar: $BOOTJAR"
+          cp "$BOOTJAR" demo/target/app.jar
           ls -lah demo/target/app.jar
 
       - name: Upload jar artifact
@@ -132,7 +147,6 @@ jobs:
           docker pull "$IMAGE"
           docker run -d --name gematria -p 8080:8080 "$IMAGE"
 
-          # Si tu n'as pas actuator, remplace l'URL par un endpoint existant.
           for i in {1..30}; do
             if curl -fsS http://localhost:8080/actuator/health >/dev/null 2>&1; then
               echo "App is healthy"
