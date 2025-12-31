@@ -46,17 +46,23 @@ jobs:
         run: mvn -s ~/.m2/settings.xml -B clean test
         working-directory: demo
 
-      # Construit le jar (utile pour docker si Dockerfile runtime-only)
       - name: Package backend jar (skip tests)
         run: mvn -s ~/.m2/settings.xml -B -DskipTests package
         working-directory: demo
 
-      # Upload du jar comme artifact pour le job docker (optionnel mais pratique)
+      # IMPORTANT: éviter de prendre *.jar.original (non exécutable)
+      - name: Create demo/target/app.jar (exclude .original)
+        run: |
+          JAR=$(ls -1 demo/target/*.jar | grep -v '\.original$' | head -n 1)
+          echo "Using jar: $JAR"
+          cp "$JAR" demo/target/app.jar
+          ls -lah demo/target/app.jar
+
       - name: Upload jar artifact
         uses: actions/upload-artifact@v4
         with:
           name: backend-jar
-          path: demo/target/*.jar
+          path: demo/target/app.jar
 
   frontend:
     runs-on: ubuntu-latest
@@ -84,60 +90,62 @@ jobs:
         working-directory: frontend
 
   docker:
-   runs-on: ubuntu-latest
-   needs: [backend, frontend]
-   steps:
-    - uses: actions/checkout@v4
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Download jar artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: backend-jar
-        path: demo/target
+      - name: Download jar artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-jar
+          path: demo/target
 
-    - name: Log in to GHCR
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Extract Docker metadata (tags/labels)
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        tags: |
-          type=sha,format=long
-          type=raw,value=latest
+      - name: Extract Docker metadata (tags/labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest
 
-    - name: Build and push image
-      uses: docker/build-push-action@v6
-      with:
-        context: demo
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: demo
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 
-    - name: Run container (smoke test)
-      run: |
-        IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
-        docker pull "$IMAGE"
-        docker run -d --name gematria -p 8080:8080 "$IMAGE"
+      - name: Run container (smoke test)
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          docker pull "$IMAGE"
+          docker run -d --name gematria -p 8080:8080 "$IMAGE"
 
-        for i in {1..30}; do
-          if curl -fsS http://localhost:8080/actuator/health >/dev/null 2>&1; then
-            echo "App is healthy"
-            exit 0
-          fi
-          sleep 2
-        done
+          # Si tu n'as pas actuator, remplace l'URL par un endpoint existant.
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8080/actuator/health >/dev/null 2>&1; then
+              echo "App is healthy"
+              exit 0
+            fi
+            sleep 2
+          done
 
-        echo "Healthcheck failed"
-        docker logs gematria
-        exit 1
+          echo "Healthcheck failed"
+          docker logs gematria
+          exit 1
 
-    - name: Cleanup
-      if: always()
-      run: |
-        docker rm -f gematria || true
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f gematria || true
