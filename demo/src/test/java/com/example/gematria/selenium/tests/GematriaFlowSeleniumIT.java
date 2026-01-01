@@ -5,6 +5,7 @@ import org.openqa.selenium.*;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.support.ui.Sleeper;
+import org.openqa.selenium.support.ui.Wait;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -29,7 +30,7 @@ class GematriaFlowSeleniumIT {
     }
 
     @Test
-    void userCanComputeGematria() {
+    void userCanComputeGematria() throws InterruptedException {
         driver.get(baseUrl);
 
         // adapte les sélecteurs à ton UI (ex: data-testid)
@@ -39,6 +40,11 @@ class GematriaFlowSeleniumIT {
         WebElement btn = driver.findElement(By.xpath("//*[@id=\"root\"]/div/form/button"));
         btn.click();
 
+        Thread.sleep(2000);
+
+
+
+    
         WebElement result = driver.findElement(By.xpath("//*[@id=\"root\"]/div/div/pre"));
         assertTrue(result.getText().length() > 0);
     }
