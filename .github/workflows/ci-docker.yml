@@ -1,4 +1,4 @@
-name: CI + Docker
+name: CI + Docker + Selenium
 
 on: [push]
 
@@ -41,7 +41,7 @@ jobs:
           </settings>
           XML
 
-      - name: Run backend tests
+      - name: Run backend unit tests
         run: mvn -s ~/.m2/settings.xml -B clean test
         working-directory: demo
 
@@ -62,18 +62,16 @@ jobs:
               break
             fi
           done
-
           if [ -z "$BOOTJAR" ]; then
             echo "No Spring Boot fat jar found in demo/target"
             ls -lah demo/target
             exit 1
           fi
-
           echo "Using boot jar: $BOOTJAR"
           cp "$BOOTJAR" demo/target/app.jar
           ls -lah demo/target/app.jar
 
-      - name: Upload jar artifact
+      - name: Upload backend jar artifact
         uses: actions/upload-artifact@v4
         with:
           name: backend-jar
@@ -104,14 +102,100 @@ jobs:
         run: npm run build
         working-directory: frontend
 
-  docker:
+      # ⚠️ Vite -> dist. Si CRA, remplace par frontend/build
+      - name: Upload frontend build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/dist
+
+  selenium:
     runs-on: ubuntu-latest
     needs: [backend, frontend]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download jar artifact
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Configure Maven mirror (repo1.maven.org)
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<'XML'
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+            <mirrors>
+              <mirror>
+                <id>central-repo1</id>
+                <mirrorOf>central</mirrorOf>
+                <url>https://repo1.maven.org/maven2/</url>
+              </mirror>
+            </mirrors>
+          </settings>
+          XML
+
+      - name: Download backend jar artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-jar
+          path: demo/target
+
+      - name: Download frontend build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend-build
+
+      - name: Start backend (8080)
+        run: |
+          java -jar demo/target/app.jar --server.port=8080 > backend.log 2>&1 &
+          echo $! > backend.pid
+
+      - name: Serve frontend build (3000)
+        run: |
+          npm i -g serve
+          serve -s frontend-build -l 3000 > frontend.log 2>&1 &
+          echo $! > frontend.pid
+
+      - name: Wait for backend
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8080/actuator/health >/dev/null 2>&1; then
+              echo "Backend healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend did not become healthy"
+          tail -n 200 backend.log || true
+          exit 1
+
+      - name: Run Selenium E2E (Failsafe)
+        run: mvn -s ~/.m2/settings.xml -B -Pselenium verify -DbaseUrl=http://localhost:3000
+        working-directory: demo
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kill $(cat backend.pid) || true
+          kill $(cat frontend.pid) || true
+          echo "=== backend.log (tail) ===" && tail -n 200 backend.log || true
+          echo "=== frontend.log (tail) ===" && tail -n 200 frontend.log || true
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, selenium]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download backend jar artifact
         uses: actions/download-artifact@v4
         with:
           name: backend-jar
