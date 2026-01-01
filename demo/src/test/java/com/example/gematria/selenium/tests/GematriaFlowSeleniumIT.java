@@ -18,7 +18,7 @@ class GematriaFlowSeleniumIT {
         baseUrl = System.getProperty("baseUrl", "http://localhost:5173");
 
         ChromeOptions options = new ChromeOptions();
-        //options.addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage");
+        options.addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage");
 
         driver = new ChromeDriver(options);
     }
